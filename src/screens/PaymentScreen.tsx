@@ -20,6 +20,7 @@ import {createTransaction} from '../services/transactionService';
 type Props = NativeStackScreenProps<RootStackParamList, 'Payment'>;
 
 const sanitizeAmount = (value: string): string => value.replace(/[^\d.]/g, '');
+const MAX_UPI_DEEPLINK_AMOUNT = 20000;
 
 export const PaymentScreen = ({navigation, route}: Props) => {
   const [upiId, setUpiId] = useState('');
@@ -55,6 +56,14 @@ export const PaymentScreen = ({navigation, route}: Props) => {
       Alert.alert(
         'Invalid Amount',
         'Please enter an amount greater than zero.',
+      );
+      return;
+    }
+
+    if (amountValue > MAX_UPI_DEEPLINK_AMOUNT) {
+      Alert.alert(
+        'UPI App Limit',
+        'Some UPI apps limit deeplink or QR-style payments to INR 20,000. Please reduce the amount, split the payment, or scan and pay directly inside your UPI app.',
       );
       return;
     }

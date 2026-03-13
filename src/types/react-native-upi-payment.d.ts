@@ -4,6 +4,8 @@ declare module 'react-native-upi-payment' {
     payeeName: string;
     amount: string;
     transactionRef: string;
+    transactionId?: string;
+    currency?: string;
     transactionNote?: string;
   }
 

@@ -4,6 +4,8 @@ export interface UPIParsedData {
   amount?: number;
 }
 
+const UPI_URI_PATTERN = /upi:\/\/pay\?[^\s"]+/i;
+
 const toNumber = (value?: string | null): number | undefined => {
   if (!value) {
     return undefined;
@@ -13,28 +15,93 @@ const toNumber = (value?: string | null): number | undefined => {
   return Number.isNaN(parsed) ? undefined : parsed;
 };
 
-export const parseUpiQrData = (rawValue: string): UPIParsedData | null => {
-  if (!rawValue || !rawValue.toLowerCase().startsWith('upi://pay')) {
+const safeDecode = (value: string): string => {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+};
+
+const normalizeRawText = (rawValue: string): string =>
+  rawValue.replace(/[\n\r\t]+/g, '').trim();
+
+const extractUpiUri = (rawValue: string): string | null => {
+  const normalized = normalizeRawText(rawValue);
+  if (!normalized) {
     return null;
   }
 
-  try {
-    const url = new URL(rawValue);
-    const upiId = url.searchParams.get('pa')?.trim();
+  const directMatch = normalized.match(UPI_URI_PATTERN)?.[0];
+  if (directMatch) {
+    return directMatch;
+  }
 
-    if (!upiId) {
-      return null;
+  const decoded = safeDecode(normalized);
+  const decodedMatch = decoded.match(UPI_URI_PATTERN)?.[0];
+  if (decodedMatch) {
+    return decodedMatch;
+  }
+
+  if (decoded.toLowerCase().startsWith('upi://pay?')) {
+    return decoded;
+  }
+
+  return null;
+};
+
+const parseQueryString = (upiUri: string): Record<string, string> => {
+  const queryIndex = upiUri.indexOf('?');
+  if (queryIndex === -1) {
+    return {};
+  }
+
+  const query = upiUri.slice(queryIndex + 1).split('#')[0];
+  const items = query.split('&');
+  const params: Record<string, string> = {};
+
+  items.forEach(item => {
+    if (!item) {
+      return;
     }
 
-    const name = url.searchParams.get('pn')?.trim() || undefined;
-    const amount = toNumber(url.searchParams.get('am'));
+    const [rawKey, ...rest] = item.split('=');
+    const rawValuePart = rest.join('=');
 
-    return {
-      upiId,
-      name,
-      amount,
-    };
-  } catch {
+    const key = safeDecode((rawKey ?? '').trim()).toLowerCase();
+    const value = safeDecode(rawValuePart.replace(/\+/g, ' ')).trim();
+
+    if (key) {
+      params[key] = value;
+    }
+  });
+
+  return params;
+};
+
+export const parseUpiQrData = (rawValue: string): UPIParsedData | null => {
+  if (!rawValue) {
     return null;
   }
+
+  const upiUri = extractUpiUri(rawValue);
+  if (!upiUri) {
+    return null;
+  }
+
+  const params = parseQueryString(upiUri);
+  const upiId = params.pa?.trim();
+
+  if (!upiId || !upiId.includes('@')) {
+    return null;
+  }
+
+  const name = params.pn?.trim() || undefined;
+  const amount = toNumber(params.am);
+
+  return {
+    upiId,
+    name,
+    amount,
+  };
 };

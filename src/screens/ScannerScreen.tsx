@@ -21,6 +21,7 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Scanner'>;
 export const ScannerScreen = ({navigation}: Props) => {
   const [permissionGranted, setPermissionGranted] = useState(false);
   const hasScannedRef = useRef(false);
+  const lastInvalidAlertAtRef = useRef(0);
   const device = useCameraDevice('back');
 
   useEffect(() => {
@@ -41,24 +42,25 @@ export const ScannerScreen = ({navigation}: Props) => {
         return;
       }
 
-      const value = codes[0].value;
+      for (const code of codes) {
+        const parsed = parseUpiQrData(code.value ?? '');
+        if (!parsed) {
+          continue;
+        }
 
-      if (!value) {
+        hasScannedRef.current = true;
+        navigation.navigate('Payment', {scannedData: parsed});
         return;
       }
 
-      const parsed = parseUpiQrData(value);
-
-      if (!parsed) {
+      const now = Date.now();
+      if (now - lastInvalidAlertAtRef.current > 2000) {
+        lastInvalidAlertAtRef.current = now;
         Alert.alert(
           'Unsupported QR',
           'Please scan a valid UPI payment QR code.',
         );
-        return;
       }
-
-      hasScannedRef.current = true;
-      navigation.navigate('Payment', {scannedData: parsed});
     },
   });
 

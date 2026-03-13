@@ -23,6 +23,15 @@ const generateTransactionRef = (): string => {
   return `UPIET-${timestamp}-${randomPart}`;
 };
 
+const generateTransactionId = (): string => {
+  const timestamp = Date.now();
+  const randomPart = Math.floor(Math.random() * 1000000)
+    .toString()
+    .padStart(6, '0');
+
+  return `TID-${timestamp}-${randomPart}`;
+};
+
 const normalizeStatus = (status?: string): UpiPaymentResult['status'] => {
   if (!status) {
     return 'UNKNOWN';
@@ -62,12 +71,17 @@ export const startUpiPayment = (
   amount: number,
 ): Promise<UpiPaymentResult> => {
   return new Promise(resolve => {
+    const transactionRef = generateTransactionRef();
+    const transactionId = generateTransactionId();
+
     RNUpiPayment.initializePayment(
       {
         vpa: upiId,
         payeeName: 'UPI Expense Tracker',
         amount: amount.toFixed(2),
-        transactionRef: generateTransactionRef(),
+        transactionRef,
+        transactionId,
+        currency: 'INR',
         transactionNote: 'UPI Expense Tracker Payment',
       },
       (successData: UpiCallbackPayload) => {
