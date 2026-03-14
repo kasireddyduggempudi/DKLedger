@@ -28,7 +28,7 @@ export const AppNavigator = () => {
       <Stack.Screen
         name="Payment"
         component={PaymentScreen}
-        options={{title: 'New Payment'}}
+        options={{title: 'DecorPay'}}
       />
       <Stack.Screen
         name="Scanner"

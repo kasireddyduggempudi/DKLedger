@@ -19,11 +19,33 @@ import {RootStackParamList} from '../navigation/types';
 import {createTransaction} from '../services/transactionService';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Payment'>;
+type PaymentMode = 'MANUAL' | 'INTENT';
 
 const sanitizeAmount = (value: string): string => value.replace(/[^\d.]/g, '');
 const GENERIC_UPI_URL = 'upi://pay?cu=INR';
+const INTENT_PAYEE_VPA = 'decorpay@upi';
+const INTENT_PAYEE_NAME = 'DecorPay';
+
+const buildUpiIntentUrl = (amountValue: number): string => {
+  const transactionRef = `DCP-${Date.now()}`;
+  const params = new URLSearchParams({
+    pa: INTENT_PAYEE_VPA,
+    pn: INTENT_PAYEE_NAME,
+    tr: transactionRef,
+    tn: 'DecorPay Payment',
+    cu: 'INR',
+  });
+
+  if (amountValue > 0) {
+    // Intentionally omitted from the URL for better compatibility in some UPI apps.
+    // The user enters amount inside the UPI app, while we still track requested amount.
+  }
+
+  return `upi://pay?${params.toString()}`;
+};
 
 export const PaymentScreen = ({navigation}: Props) => {
+  const [paymentMode, setPaymentMode] = useState<PaymentMode>('MANUAL');
   const [amount, setAmount] = useState('');
   const [category, setCategory] = useState(CATEGORIES[0]);
   const [selectedUpiApp, setSelectedUpiApp] = useState<UpiAppOption | null>(
@@ -40,6 +62,7 @@ export const PaymentScreen = ({navigation}: Props) => {
     amount: number;
     category: string;
     selectedUpiApp: UpiAppOption;
+    mode: PaymentMode;
   } | null>(null);
 
   const amountValue = useMemo(() => Number(amount), [amount]);
@@ -53,7 +76,10 @@ export const PaymentScreen = ({navigation}: Props) => {
     await createTransaction({
       amount: pendingTransaction.amount,
       category: pendingTransaction.category,
-      upiId: pendingTransaction.selectedUpiApp.label,
+      upiId:
+        pendingTransaction.mode === 'INTENT'
+          ? 'UPI Intent'
+          : pendingTransaction.selectedUpiApp.label,
       status,
     });
   };
@@ -132,6 +158,73 @@ export const PaymentScreen = ({navigation}: Props) => {
     };
   }, [navigation, waitingForConfirmation]);
 
+  const openManualFlow = async (
+    amountValueToPay: number,
+    selectedApp: UpiAppOption,
+  ) => {
+    pendingTransactionRef.current = {
+      amount: amountValueToPay,
+      category,
+      selectedUpiApp: selectedApp,
+      mode: 'MANUAL',
+    };
+
+    didGoBackgroundRef.current = false;
+
+    let opened = false;
+    const canOpenSelected = await Linking.canOpenURL(selectedApp.scheme);
+    if (canOpenSelected) {
+      await Linking.openURL(selectedApp.scheme);
+      opened = true;
+    }
+
+    if (!opened) {
+      const canOpenGenericUpi = await Linking.canOpenURL(GENERIC_UPI_URL);
+      if (canOpenGenericUpi) {
+        await Linking.openURL(GENERIC_UPI_URL);
+        opened = true;
+      }
+    }
+
+    if (!opened) {
+      pendingTransactionRef.current = null;
+      launchedUpiFlowRef.current = false;
+      Alert.alert(
+        'UPI App Not Available',
+        'Could not open the selected UPI app. Please try another app.',
+      );
+      return;
+    }
+
+    launchedUpiFlowRef.current = true;
+    setWaitingForConfirmation(true);
+  };
+
+  const openIntentFlow = async (amountValueToPay: number) => {
+    const intentUrl = buildUpiIntentUrl(amountValueToPay);
+    const canOpenIntent = await Linking.canOpenURL(intentUrl);
+
+    if (!canOpenIntent) {
+      Alert.alert(
+        'UPI Intent Not Supported',
+        'Could not open UPI payment intent on this device.',
+      );
+      return;
+    }
+
+    pendingTransactionRef.current = {
+      amount: amountValueToPay,
+      category,
+      selectedUpiApp: selectedUpiApp ?? UPI_APPS[0],
+      mode: 'INTENT',
+    };
+
+    didGoBackgroundRef.current = false;
+    await Linking.openURL(intentUrl);
+    launchedUpiFlowRef.current = true;
+    setWaitingForConfirmation(true);
+  };
+
   const onPay = async () => {
     if (!amount || Number.isNaN(amountValue) || amountValue <= 0) {
       Alert.alert(
@@ -141,7 +234,7 @@ export const PaymentScreen = ({navigation}: Props) => {
       return;
     }
 
-    if (!selectedUpiApp) {
+    if (paymentMode === 'MANUAL' && !selectedUpiApp) {
       Alert.alert('UPI App Required', 'Please select a UPI app first.');
       return;
     }
@@ -149,48 +242,22 @@ export const PaymentScreen = ({navigation}: Props) => {
     setLoading(true);
 
     try {
-      pendingTransactionRef.current = {
-        amount: amountValue,
-        category,
-        selectedUpiApp,
-      };
-
-      didGoBackgroundRef.current = false;
-
-      let opened = false;
-      const canOpenSelected = await Linking.canOpenURL(selectedUpiApp.scheme);
-      if (canOpenSelected) {
-        await Linking.openURL(selectedUpiApp.scheme);
-        opened = true;
+      if (paymentMode === 'MANUAL') {
+        await openManualFlow(amountValue, selectedUpiApp as UpiAppOption);
+      } else {
+        await openIntentFlow(amountValue);
       }
-
-      if (!opened) {
-        const canOpenGenericUpi = await Linking.canOpenURL(GENERIC_UPI_URL);
-        if (canOpenGenericUpi) {
-          await Linking.openURL(GENERIC_UPI_URL);
-          opened = true;
-        }
-      }
-
-      if (!opened) {
-        pendingTransactionRef.current = null;
-        launchedUpiFlowRef.current = false;
-        Alert.alert(
-          'UPI App Not Available',
-          'Could not open the selected UPI app. Please try another app.',
-        );
-        return;
-      }
-
-      launchedUpiFlowRef.current = true;
-      setWaitingForConfirmation(true);
     } catch {
       pendingTransactionRef.current = null;
       launchedUpiFlowRef.current = false;
       didGoBackgroundRef.current = false;
       Alert.alert(
         'Open UPI App Failed',
-        `Could not open ${selectedUpiApp.label}. Try Google Pay or another installed UPI app.`,
+        paymentMode === 'MANUAL'
+          ? `Could not open ${
+              (selectedUpiApp as UpiAppOption).label
+            }. Try Google Pay or another installed UPI app.`
+          : 'Could not open direct UPI intent. Try manual mode.',
       );
     } finally {
       setLoading(false);
@@ -207,6 +274,39 @@ export const PaymentScreen = ({navigation}: Props) => {
           Enter amount, choose category, open a UPI app, and confirm payment.
         </Text>
 
+        <Text style={styles.label}>Payment Mode</Text>
+        <View style={styles.modeWrap}>
+          <TouchableOpacity
+            style={[
+              styles.modeButton,
+              paymentMode === 'MANUAL' && styles.modeButtonSelected,
+            ]}
+            onPress={() => setPaymentMode('MANUAL')}>
+            <Text
+              style={[
+                styles.modeButtonText,
+                paymentMode === 'MANUAL' && styles.modeButtonTextSelected,
+              ]}>
+              Manual App Flow
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.modeButton,
+              paymentMode === 'INTENT' && styles.modeButtonSelected,
+            ]}
+            onPress={() => setPaymentMode('INTENT')}>
+            <Text
+              style={[
+                styles.modeButtonText,
+                paymentMode === 'INTENT' && styles.modeButtonTextSelected,
+              ]}>
+              Direct Intent
+            </Text>
+          </TouchableOpacity>
+        </View>
+
         <AmountInput
           value={amount}
           onChangeText={value => setAmount(sanitizeAmount(value))}
@@ -218,34 +318,56 @@ export const PaymentScreen = ({navigation}: Props) => {
           onChange={setCategory}
         />
 
-        <Text style={styles.label}>UPI App</Text>
-        <View style={styles.appsWrap}>
-          {UPI_APPS.map(app => {
-            const isSelected = selectedUpiApp?.id === app.id;
+        {paymentMode === 'MANUAL' ? (
+          <>
+            <Text style={styles.label}>UPI App</Text>
+            <View style={styles.appsWrap}>
+              {UPI_APPS.map(app => {
+                const isSelected = selectedUpiApp?.id === app.id;
 
-            return (
-              <TouchableOpacity
-                key={app.id}
-                style={[styles.appChip, isSelected && styles.appChipSelected]}
-                onPress={() => setSelectedUpiApp(app)}>
-                <Text
-                  style={[
-                    styles.appChipText,
-                    isSelected && styles.appChipTextSelected,
-                  ]}>
-                  {app.label}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
+                return (
+                  <TouchableOpacity
+                    key={app.id}
+                    style={[
+                      styles.appChip,
+                      isSelected && styles.appChipSelected,
+                    ]}
+                    onPress={() => setSelectedUpiApp(app)}>
+                    <Text
+                      style={[
+                        styles.appChipText,
+                        isSelected && styles.appChipTextSelected,
+                      ]}>
+                      {app.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </>
+        ) : (
+          <View style={styles.intentInfoBox}>
+            <Text style={styles.intentInfoText}>
+              Direct intent uses standard UPI URL and does not pass amount in
+              the link.
+            </Text>
+            <Text style={styles.intentInfoMeta}>
+              Payee: {INTENT_PAYEE_NAME}
+            </Text>
+            <Text style={styles.intentInfoMeta}>VPA: {INTENT_PAYEE_VPA}</Text>
+          </View>
+        )}
 
         <TouchableOpacity
           style={[styles.actionButton, loading && styles.disabled]}
           onPress={onPay}
           disabled={loading}>
           <Text style={styles.actionButtonText}>
-            {loading ? 'Opening App...' : 'Pay'}
+            {loading
+              ? 'Opening App...'
+              : paymentMode === 'MANUAL'
+              ? 'Pay (Manual)'
+              : 'Pay (Intent)'}
           </Text>
         </TouchableOpacity>
 
@@ -297,6 +419,32 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginBottom: 8,
   },
+  modeWrap: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+  },
+  modeButton: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    borderRadius: 10,
+    paddingVertical: 10,
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+  },
+  modeButtonSelected: {
+    backgroundColor: '#115e59',
+    borderColor: '#115e59',
+  },
+  modeButtonText: {
+    color: '#334155',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  modeButtonTextSelected: {
+    color: '#ffffff',
+  },
   appsWrap: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -322,6 +470,24 @@ const styles = StyleSheet.create({
   },
   appChipTextSelected: {
     color: '#ffffff',
+  },
+  intentInfoBox: {
+    borderWidth: 1,
+    borderColor: '#d9e2ec',
+    borderRadius: 10,
+    backgroundColor: '#f8fafc',
+    padding: 10,
+    marginBottom: 8,
+  },
+  intentInfoText: {
+    color: '#334155',
+    fontSize: 12,
+  },
+  intentInfoMeta: {
+    color: '#0f172a',
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 4,
   },
   actionButton: {
     marginTop: 8,
