@@ -1,5 +1,6 @@
 export type RootStackParamList = {
   Dashboard: undefined;
+  History: undefined;
   AddExpense: undefined;
   MonthDetail: {
     year: number;

@@ -4,6 +4,7 @@ import {createNativeStackNavigator} from '@react-navigation/native-stack';
 import {RootStackParamList} from './types';
 import {initTransactionService} from '../services/transactionService';
 import {DashboardScreen} from '../screens/DashboardScreen';
+import {HistoryScreen} from '../screens/HistoryScreen';
 import {AddExpenseScreen} from '../screens/AddExpenseScreen';
 import {MonthDetailScreen} from '../screens/MonthDetailScreen';
 
@@ -29,6 +30,11 @@ export function AppNavigator() {
         name="Dashboard"
         component={DashboardScreen}
         options={{title: 'DKLedger'}}
+      />
+      <Stack.Screen
+        name="History"
+        component={HistoryScreen}
+        options={{title: 'History'}}
       />
       <Stack.Screen
         name="AddExpense"
