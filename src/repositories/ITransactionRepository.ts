@@ -31,4 +31,24 @@ export interface ITransactionRepository {
 
   /** Hard-delete a single transaction by id. */
   delete(id: string): Promise<void>;
+
+  /** Monthly budget amount (null when not configured). */
+  getMonthlyLimit(): Promise<number | null>;
+
+  /** Save or clear monthly budget amount. */
+  setMonthlyLimit(limit: number | null): Promise<void>;
+
+  /** Total spend for a given calendar month. */
+  getMonthTotal(year: number, month: number): Promise<number>;
+
+  /** Read once-per-month alert flags for 80% and 100% budget thresholds. */
+  getBudgetAlertState(
+    monthKey: string,
+  ): Promise<{alerted80: boolean; alerted100: boolean}>;
+
+  /** Persist once-per-month alert flags for 80% and 100% budget thresholds. */
+  setBudgetAlertState(
+    monthKey: string,
+    state: {alerted80: boolean; alerted100: boolean},
+  ): Promise<void>;
 }

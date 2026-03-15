@@ -1,10 +1,12 @@
 import React, {useCallback, useMemo, useState} from 'react';
 import {
   ActivityIndicator,
+  Alert,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -13,7 +15,11 @@ import {NativeStackScreenProps} from '@react-navigation/native-stack';
 import {RootStackParamList} from '../navigation/types';
 import {CategorySummary, MonthlySummary} from '../models/Summary';
 import {formatAmount} from '../utils/dateUtils';
-import {getLast2YearsMonthlySummaries} from '../services/transactionService';
+import {
+  getLast2YearsMonthlySummaries,
+  getMonthlyLimit,
+  setMonthlyLimit,
+} from '../services/transactionService';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Dashboard'>;
 
@@ -42,14 +48,22 @@ export function DashboardScreen({navigation}: Props) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [currentMonth, setCurrentMonth] = useState<MonthlySummary | null>(null);
+  const [monthlyLimit, setMonthlyLimitState] = useState<number | null>(null);
+  const [limitInput, setLimitInput] = useState('');
+  const [savingLimit, setSavingLimit] = useState(false);
 
   const load = useCallback(async (silent = false) => {
     if (!silent) {
       setLoading(true);
     }
     try {
-      const summaries = await getLast2YearsMonthlySummaries();
+      const [summaries, limit] = await Promise.all([
+        getLast2YearsMonthlySummaries(),
+        getMonthlyLimit(),
+      ]);
       setCurrentMonth(summaries[0] ?? null);
+      setMonthlyLimitState(limit);
+      setLimitInput(limit ? String(limit) : '');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -72,6 +86,46 @@ export function DashboardScreen({navigation}: Props) {
       [...(currentMonth?.categories ?? [])].sort((a, b) => b.total - a.total),
     [currentMonth],
   );
+
+  const spent = currentMonth?.total ?? 0;
+  const ratio = monthlyLimit && monthlyLimit > 0 ? spent / monthlyLimit : 0;
+  const pct = Math.min(100, Math.round(ratio * 100));
+  const remaining = monthlyLimit ? Math.max(0, monthlyLimit - spent) : 0;
+  const progressColor =
+    pct >= 100 ? '#DC2626' : pct >= 80 ? '#F59E0B' : PRIMARY;
+  const progressWidth = `${pct}%` as any;
+
+  const onSaveLimit = useCallback(async () => {
+    const parsed = Number(limitInput.trim());
+    if (!limitInput.trim()) {
+      setSavingLimit(true);
+      try {
+        await setMonthlyLimit(null);
+        setMonthlyLimitState(null);
+        Alert.alert('Budget Cleared', 'Monthly budget removed.');
+      } finally {
+        setSavingLimit(false);
+      }
+      return;
+    }
+
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      Alert.alert(
+        'Invalid Limit',
+        'Please enter a valid amount greater than 0.',
+      );
+      return;
+    }
+
+    setSavingLimit(true);
+    try {
+      await setMonthlyLimit(parsed);
+      setMonthlyLimitState(parsed);
+      Alert.alert('Budget Saved', 'Monthly budget updated successfully.');
+    } finally {
+      setSavingLimit(false);
+    }
+  }, [limitInput]);
 
   if (loading) {
     return (
@@ -101,6 +155,54 @@ export function DashboardScreen({navigation}: Props) {
           <Text style={styles.heroSub}>
             {currentMonth?.label ?? 'No data yet'}
           </Text>
+        </View>
+
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>Monthly Budget</Text>
+          <View style={styles.budgetRow}>
+            <TextInput
+              style={styles.budgetInput}
+              value={limitInput}
+              onChangeText={setLimitInput}
+              placeholder="Set monthly limit"
+              placeholderTextColor="#9CA3AF"
+              keyboardType="decimal-pad"
+            />
+            <TouchableOpacity
+              style={[
+                styles.budgetBtn,
+                savingLimit && styles.budgetBtnDisabled,
+              ]}
+              onPress={onSaveLimit}
+              disabled={savingLimit}>
+              <Text style={styles.budgetBtnText}>
+                {savingLimit ? 'Saving...' : 'Save'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {monthlyLimit ? (
+            <>
+              <Text style={styles.budgetMeta}>
+                Spent {formatAmount(spent)} of {formatAmount(monthlyLimit)} (
+                {pct}%)
+              </Text>
+              <Text style={styles.budgetRemaining}>
+                Remaining: {formatAmount(remaining)}
+              </Text>
+              <View style={styles.progressTrack}>
+                <View
+                  style={[
+                    styles.progressFill,
+                    {width: progressWidth},
+                    {backgroundColor: progressColor},
+                  ]}
+                />
+              </View>
+            </>
+          ) : (
+            <Text style={styles.emptyText}>No monthly budget set yet.</Text>
+          )}
         </View>
 
         <View style={styles.sectionCard}>
@@ -174,6 +276,43 @@ const styles = StyleSheet.create({
     shadowOffset: {width: 0, height: 2},
     elevation: 2,
   },
+  budgetRow: {flexDirection: 'row', gap: 10, alignItems: 'center'},
+  budgetInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#FAFAFA',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    height: 42,
+    fontSize: 14,
+    color: TEXT,
+  },
+  budgetBtn: {
+    height: 42,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    backgroundColor: PRIMARY,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  budgetBtnDisabled: {opacity: 0.6},
+  budgetBtnText: {color: '#FFF', fontSize: 13, fontWeight: '700'},
+  budgetMeta: {marginTop: 10, color: TEXT, fontSize: 13, fontWeight: '500'},
+  budgetRemaining: {
+    marginTop: 4,
+    color: MUTED,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  progressTrack: {
+    marginTop: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#E5E7EB',
+    overflow: 'hidden',
+  },
+  progressFill: {height: 8, borderRadius: 4},
   sectionTitle: {
     color: MUTED,
     fontSize: 12,

@@ -13,7 +13,10 @@ import {
 import {NativeStackScreenProps} from '@react-navigation/native-stack';
 import {RootStackParamList} from '../navigation/types';
 import {CATEGORIES, OTHER_CATEGORY_ID} from '../utils/constants';
-import {addExpense} from '../services/transactionService';
+import {
+  addExpense,
+  evaluateBudgetThreshold,
+} from '../services/transactionService';
 import {formatDateDisplay, shiftDate, todayString} from '../utils/dateUtils';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'AddExpense'>;
@@ -64,15 +67,47 @@ export function AddExpenseScreen({navigation}: Props) {
         date,
       });
 
+      const budgetEvent = await evaluateBudgetThreshold(date);
+
       setAmount('');
       setCustomCategory('');
       setNote('');
       setDate(todayString());
 
-      Alert.alert('Saved', 'Expense recorded successfully.', [
-        {text: 'Add Another'},
-        {text: 'Dashboard', onPress: () => navigation.navigate('Dashboard')},
-      ]);
+      if (budgetEvent?.level === 100) {
+        Alert.alert(
+          'Budget Reached',
+          `You have reached 100% of your monthly budget.\n\nSpent: ${budgetEvent.total.toFixed(
+            2,
+          )}\nLimit: ${budgetEvent.limit.toFixed(2)}`,
+          [
+            {text: 'OK'},
+            {
+              text: 'Go Home',
+              onPress: () => navigation.navigate('Dashboard'),
+            },
+          ],
+        );
+      } else if (budgetEvent?.level === 80) {
+        Alert.alert(
+          'Budget Alert',
+          `You have used 80% of your monthly budget.\n\nSpent: ${budgetEvent.total.toFixed(
+            2,
+          )}\nLimit: ${budgetEvent.limit.toFixed(2)}`,
+          [
+            {text: 'Continue'},
+            {
+              text: 'Go Home',
+              onPress: () => navigation.navigate('Dashboard'),
+            },
+          ],
+        );
+      } else {
+        Alert.alert('Saved', 'Expense recorded successfully.', [
+          {text: 'Add Another'},
+          {text: 'Dashboard', onPress: () => navigation.navigate('Dashboard')},
+        ]);
+      }
     } catch {
       Alert.alert('Error', 'Could not save expense. Please try again.');
     } finally {

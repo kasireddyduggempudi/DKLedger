@@ -51,3 +51,64 @@ export async function getLast5YearsYearlySummaries(): Promise<YearlySummary[]> {
 export async function deleteExpense(id: string): Promise<void> {
   return activeRepository.delete(id);
 }
+
+const getMonthKey = (date: string): string => date.slice(0, 7);
+
+const parseMonthFromDate = (date: string): {year: number; month: number} => {
+  const [yearStr, monthStr] = date.split('-');
+  return {
+    year: Number(yearStr),
+    month: Number(monthStr),
+  };
+};
+
+export async function getMonthlyLimit(): Promise<number | null> {
+  return activeRepository.getMonthlyLimit();
+}
+
+export async function setMonthlyLimit(limit: number | null): Promise<void> {
+  return activeRepository.setMonthlyLimit(limit);
+}
+
+export interface BudgetThresholdEvent {
+  level: 80 | 100;
+  total: number;
+  limit: number;
+}
+
+/**
+ * Checks current month spend against configured budget and emits a single
+ * threshold event when 80% or 100% is reached for the first time in that month.
+ */
+export async function evaluateBudgetThreshold(
+  date: string,
+): Promise<BudgetThresholdEvent | null> {
+  const limit = await activeRepository.getMonthlyLimit();
+  if (!limit || limit <= 0) {
+    return null;
+  }
+
+  const {year, month} = parseMonthFromDate(date);
+  const monthKey = getMonthKey(date);
+  const total = await activeRepository.getMonthTotal(year, month);
+  const pct = (total / limit) * 100;
+  const state = await activeRepository.getBudgetAlertState(monthKey);
+
+  if (pct >= 100 && !state.alerted100) {
+    await activeRepository.setBudgetAlertState(monthKey, {
+      alerted80: true,
+      alerted100: true,
+    });
+    return {level: 100, total, limit};
+  }
+
+  if (pct >= 80 && !state.alerted80) {
+    await activeRepository.setBudgetAlertState(monthKey, {
+      alerted80: true,
+      alerted100: state.alerted100,
+    });
+    return {level: 80, total, limit};
+  }
+
+  return null;
+}

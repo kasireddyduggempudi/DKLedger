@@ -13,6 +13,9 @@ SQLite.enablePromise(true);
 
 const DB_NAME = 'dkledger.db';
 const TABLE = 'expenses';
+const SETTINGS_TABLE = 'app_settings';
+const BUDGET_ALERT_TABLE = 'budget_alert_state';
+const MONTHLY_LIMIT_KEY = 'monthly_limit';
 
 export class SqliteTransactionRepository implements ITransactionRepository {
   private db: SQLiteDatabase | null = null;
@@ -40,6 +43,19 @@ export class SqliteTransactionRepository implements ITransactionRepository {
     // Index for fast date-range queries
     await db.executeSql(`
       CREATE INDEX IF NOT EXISTS idx_expenses_date ON ${TABLE}(date);
+    `);
+    await db.executeSql(`
+      CREATE TABLE IF NOT EXISTS ${SETTINGS_TABLE} (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+    `);
+    await db.executeSql(`
+      CREATE TABLE IF NOT EXISTS ${BUDGET_ALERT_TABLE} (
+        monthKey  TEXT PRIMARY KEY,
+        alerted80 INTEGER NOT NULL DEFAULT 0,
+        alerted100 INTEGER NOT NULL DEFAULT 0
+      );
     `);
   }
 
@@ -207,6 +223,79 @@ export class SqliteTransactionRepository implements ITransactionRepository {
   async delete(id: string): Promise<void> {
     const db = await this.getDb();
     await db.executeSql(`DELETE FROM ${TABLE} WHERE id = ?;`, [id]);
+  }
+
+  async getMonthlyLimit(): Promise<number | null> {
+    const db = await this.getDb();
+    const [result] = await db.executeSql(
+      `SELECT value FROM ${SETTINGS_TABLE} WHERE key = ? LIMIT 1;`,
+      [MONTHLY_LIMIT_KEY],
+    );
+    if (result.rows.length === 0) {
+      return null;
+    }
+    const raw = result.rows.item(0).value;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }
+
+  async setMonthlyLimit(limit: number | null): Promise<void> {
+    const db = await this.getDb();
+    if (limit === null || !Number.isFinite(limit) || limit <= 0) {
+      await db.executeSql(`DELETE FROM ${SETTINGS_TABLE} WHERE key = ?;`, [
+        MONTHLY_LIMIT_KEY,
+      ]);
+      return;
+    }
+
+    await db.executeSql(
+      `INSERT OR REPLACE INTO ${SETTINGS_TABLE} (key, value) VALUES (?, ?);`,
+      [MONTHLY_LIMIT_KEY, String(limit)],
+    );
+  }
+
+  async getMonthTotal(year: number, month: number): Promise<number> {
+    const db = await this.getDb();
+    const prefix = `${year}-${padMonth(month)}`;
+    const [result] = await db.executeSql(
+      `SELECT COALESCE(SUM(amount), 0) AS total
+       FROM ${TABLE}
+       WHERE substr(date,1,7) = ?;`,
+      [prefix],
+    );
+    return Number(result.rows.item(0).total ?? 0);
+  }
+
+  async getBudgetAlertState(
+    monthKey: string,
+  ): Promise<{alerted80: boolean; alerted100: boolean}> {
+    const db = await this.getDb();
+    const [result] = await db.executeSql(
+      `SELECT alerted80, alerted100 FROM ${BUDGET_ALERT_TABLE} WHERE monthKey = ? LIMIT 1;`,
+      [monthKey],
+    );
+
+    if (result.rows.length === 0) {
+      return {alerted80: false, alerted100: false};
+    }
+
+    const row = result.rows.item(0);
+    return {
+      alerted80: Number(row.alerted80) === 1,
+      alerted100: Number(row.alerted100) === 1,
+    };
+  }
+
+  async setBudgetAlertState(
+    monthKey: string,
+    state: {alerted80: boolean; alerted100: boolean},
+  ): Promise<void> {
+    const db = await this.getDb();
+    await db.executeSql(
+      `INSERT OR REPLACE INTO ${BUDGET_ALERT_TABLE} (monthKey, alerted80, alerted100)
+       VALUES (?, ?, ?);`,
+      [monthKey, state.alerted80 ? 1 : 0, state.alerted100 ? 1 : 0],
+    );
   }
 }
 
