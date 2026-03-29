@@ -1,5 +1,6 @@
 import {Transaction} from '../models/Transaction';
 import {MonthlySummary, YearlySummary} from '../models/Summary';
+import {Category} from '../utils/constants';
 
 /**
  * Abstract data-access contract.
@@ -57,4 +58,16 @@ export interface ITransactionRepository {
     monthKey: string,
     state: {alerted80: boolean; alerted100: boolean},
   ): Promise<void>;
+
+  /** List available categories for expense selection and summaries. */
+  getCategories(): Promise<Category[]>;
+
+  /** Create a user-defined category. */
+  addCategory(data: Omit<Category, 'id'>): Promise<Category>;
+
+  /** Update a category metadata by id. */
+  updateCategory(id: string, data: Omit<Category, 'id'>): Promise<Category>;
+
+  /** Delete category and move its expenses to the fallback category. */
+  deleteCategory(id: string): Promise<void>;
 }

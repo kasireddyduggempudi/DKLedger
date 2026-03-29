@@ -6,7 +6,11 @@ import {
   YearlySummary,
 } from '../models/Summary';
 import {ITransactionRepository} from './ITransactionRepository';
-import {CATEGORIES} from '../utils/constants';
+import {
+  Category,
+  DEFAULT_CATEGORIES,
+  OTHER_CATEGORY_ID,
+} from '../utils/constants';
 import {monthLabel, padMonth, generateId} from '../utils/dateUtils';
 
 SQLite.enablePromise(true);
@@ -15,7 +19,9 @@ const DB_NAME = 'dkledger.db';
 const TABLE = 'expenses';
 const SETTINGS_TABLE = 'app_settings';
 const BUDGET_ALERT_TABLE = 'budget_alert_state';
+const CATEGORIES_TABLE = 'categories';
 const MONTHLY_LIMIT_KEY = 'monthly_limit';
+const FALLBACK_CATEGORY_COLOR = '#95A5A6';
 
 export class SqliteTransactionRepository implements ITransactionRepository {
   private db: SQLiteDatabase | null = null;
@@ -57,6 +63,34 @@ export class SqliteTransactionRepository implements ITransactionRepository {
         alerted100 INTEGER NOT NULL DEFAULT 0
       );
     `);
+    await db.executeSql(`
+      CREATE TABLE IF NOT EXISTS ${CATEGORIES_TABLE} (
+        id        TEXT PRIMARY KEY,
+        label     TEXT NOT NULL,
+        icon      TEXT NOT NULL,
+        color     TEXT NOT NULL,
+        isSystem  INTEGER NOT NULL DEFAULT 0,
+        sortOrder INTEGER NOT NULL DEFAULT 0,
+        createdAt TEXT NOT NULL
+      );
+    `);
+
+    await this.seedDefaultCategories();
+  }
+
+  private async seedDefaultCategories(): Promise<void> {
+    const db = await this.getDb();
+    const now = new Date().toISOString();
+
+    for (let i = 0; i < DEFAULT_CATEGORIES.length; i++) {
+      const category = DEFAULT_CATEGORIES[i];
+      await db.executeSql(
+        `INSERT OR IGNORE INTO ${CATEGORIES_TABLE}
+         (id, label, icon, color, isSystem, sortOrder, createdAt)
+         VALUES (?, ?, ?, ?, 1, ?, ?);`,
+        [category.id, category.label, category.icon, category.color, i, now],
+      );
+    }
   }
 
   async add(data: Omit<Transaction, 'id' | 'createdAt'>): Promise<Transaction> {
@@ -152,18 +186,30 @@ export class SqliteTransactionRepository implements ITransactionRepository {
     const fromPrefix = `${from.getFullYear()}-${padMonth(from.getMonth() + 1)}`;
 
     const [result] = await db.executeSql(
-      `SELECT substr(date,1,7) as ym, category, SUM(amount) as total, COUNT(*) as cnt
-       FROM ${TABLE}
-       WHERE substr(date,1,7) >= ?
-       GROUP BY ym, category
+      `SELECT
+         substr(e.date,1,7) as ym,
+         e.category as category,
+         COALESCE(c.label, e.category) as categoryLabel,
+         COALESCE(c.color, ?) as color,
+         SUM(e.amount) as total,
+         COUNT(*) as cnt
+       FROM ${TABLE} e
+       LEFT JOIN ${CATEGORIES_TABLE} c ON c.id = e.category
+      WHERE substr(e.date,1,7) >= ?
+       GROUP BY ym, category, categoryLabel, color
        ORDER BY ym DESC;`,
-      [fromPrefix],
+      [FALLBACK_CATEGORY_COLOR, fromPrefix],
     );
 
     // Aggregate into a map keyed by 'YYYY-MM'
     const map: Record<
       string,
-      {cats: Record<string, {total: number; count: number}>}
+      {
+        cats: Record<
+          string,
+          {total: number; count: number; label: string; color: string}
+        >;
+      }
     > = {};
     for (let i = 0; i < result.rows.length; i++) {
       const r = result.rows.item(i);
@@ -173,6 +219,8 @@ export class SqliteTransactionRepository implements ITransactionRepository {
       map[r.ym].cats[r.category] = {
         total: Number(r.total),
         count: Number(r.cnt),
+        label: String(r.categoryLabel),
+        color: String(r.color),
       };
     }
 
@@ -185,15 +233,15 @@ export class SqliteTransactionRepository implements ITransactionRepository {
       const ym = `${yr}-${padMonth(mo)}`;
       const cats = map[ym]?.cats ?? {};
 
-      const categories: CategorySummary[] = CATEGORIES.filter(
-        c => cats[c.id] !== undefined,
-      ).map(c => ({
-        categoryId: c.id,
-        categoryLabel: c.label,
-        color: c.color,
-        total: cats[c.id]?.total ?? 0,
-        count: cats[c.id]?.count ?? 0,
-      }));
+      const categories: CategorySummary[] = Object.keys(cats)
+        .map(categoryId => ({
+          categoryId,
+          categoryLabel: cats[categoryId].label,
+          color: cats[categoryId].color,
+          total: cats[categoryId].total,
+          count: cats[categoryId].count,
+        }))
+        .sort((a, b) => b.total - a.total);
 
       summaries.push({
         year: yr,
@@ -213,24 +261,39 @@ export class SqliteTransactionRepository implements ITransactionRepository {
     const fromYear = currentYear - (years - 1);
 
     const [result] = await db.executeSql(
-      `SELECT substr(date,1,4) as yr, category, SUM(amount) as total, COUNT(*) as cnt
-       FROM ${TABLE}
-       WHERE CAST(substr(date,1,4) AS INTEGER) >= ?
-       GROUP BY yr, category
+      `SELECT
+         substr(e.date,1,4) as yr,
+         e.category as category,
+         COALESCE(c.label, e.category) as categoryLabel,
+         COALESCE(c.color, ?) as color,
+         SUM(e.amount) as total,
+         COUNT(*) as cnt
+       FROM ${TABLE} e
+       LEFT JOIN ${CATEGORIES_TABLE} c ON c.id = e.category
+      WHERE CAST(substr(e.date,1,4) AS INTEGER) >= ?
+       GROUP BY yr, category, categoryLabel, color
        ORDER BY yr DESC;`,
-      [fromYear],
+      [FALLBACK_CATEGORY_COLOR, fromYear],
     );
 
     const map: Record<
       string,
-      Record<string, {total: number; count: number}>
+      Record<
+        string,
+        {total: number; count: number; label: string; color: string}
+      >
     > = {};
     for (let i = 0; i < result.rows.length; i++) {
       const r = result.rows.item(i);
       if (!map[r.yr]) {
         map[r.yr] = {};
       }
-      map[r.yr][r.category] = {total: Number(r.total), count: Number(r.cnt)};
+      map[r.yr][r.category] = {
+        total: Number(r.total),
+        count: Number(r.cnt),
+        label: String(r.categoryLabel),
+        color: String(r.color),
+      };
     }
 
     const summaries: YearlySummary[] = [];
@@ -238,15 +301,15 @@ export class SqliteTransactionRepository implements ITransactionRepository {
       const yr = currentYear - i;
       const cats = map[String(yr)] ?? {};
 
-      const categories: CategorySummary[] = CATEGORIES.filter(
-        c => cats[c.id] !== undefined,
-      ).map(c => ({
-        categoryId: c.id,
-        categoryLabel: c.label,
-        color: c.color,
-        total: cats[c.id]?.total ?? 0,
-        count: cats[c.id]?.count ?? 0,
-      }));
+      const categories: CategorySummary[] = Object.keys(cats)
+        .map(categoryId => ({
+          categoryId,
+          categoryLabel: cats[categoryId].label,
+          color: cats[categoryId].color,
+          total: cats[categoryId].total,
+          count: cats[categoryId].count,
+        }))
+        .sort((a, b) => b.total - a.total);
 
       summaries.push({
         year: yr,
@@ -334,6 +397,112 @@ export class SqliteTransactionRepository implements ITransactionRepository {
        VALUES (?, ?, ?);`,
       [monthKey, state.alerted80 ? 1 : 0, state.alerted100 ? 1 : 0],
     );
+  }
+
+  async getCategories(): Promise<Category[]> {
+    const db = await this.getDb();
+    const [result] = await db.executeSql(
+      `SELECT id, label, icon, color
+       FROM ${CATEGORIES_TABLE}
+       ORDER BY sortOrder ASC, createdAt ASC;`,
+    );
+
+    const rows: Category[] = [];
+    for (let i = 0; i < result.rows.length; i++) {
+      const row = result.rows.item(i);
+      rows.push({
+        id: row.id,
+        label: row.label,
+        icon: row.icon,
+        color: row.color,
+      });
+    }
+    return rows;
+  }
+
+  async addCategory(data: Omit<Category, 'id'>): Promise<Category> {
+    const db = await this.getDb();
+    const [maxOrderResult] = await db.executeSql(
+      `SELECT COALESCE(MAX(sortOrder), -1) AS maxOrder FROM ${CATEGORIES_TABLE};`,
+    );
+    const nextOrder = Number(maxOrderResult.rows.item(0).maxOrder ?? -1) + 1;
+    const record: Category = {
+      id: `cat_${generateId()}`,
+      ...data,
+    };
+
+    await db.executeSql(
+      `INSERT INTO ${CATEGORIES_TABLE}
+       (id, label, icon, color, isSystem, sortOrder, createdAt)
+       VALUES (?, ?, ?, ?, 0, ?, ?);`,
+      [
+        record.id,
+        record.label,
+        record.icon,
+        record.color,
+        nextOrder,
+        new Date().toISOString(),
+      ],
+    );
+
+    return record;
+  }
+
+  async updateCategory(
+    id: string,
+    data: Omit<Category, 'id'>,
+  ): Promise<Category> {
+    const db = await this.getDb();
+
+    await db.executeSql(
+      `UPDATE ${CATEGORIES_TABLE}
+       SET label = ?, icon = ?, color = ?
+       WHERE id = ?;`,
+      [data.label, data.icon, data.color, id],
+    );
+
+    return {id, ...data};
+  }
+
+  async deleteCategory(id: string): Promise<void> {
+    if (id === OTHER_CATEGORY_ID) {
+      throw new Error('The fallback category cannot be deleted.');
+    }
+
+    const db = await this.getDb();
+
+    const [labelResult] = await db.executeSql(
+      `SELECT label FROM ${CATEGORIES_TABLE} WHERE id = ? LIMIT 1;`,
+      [id],
+    );
+
+    if (labelResult.rows.length === 0) {
+      return;
+    }
+
+    const label = String(labelResult.rows.item(0).label ?? 'Deleted Category');
+
+    await db.executeSql('BEGIN TRANSACTION;');
+    try {
+      await db.executeSql(
+        `UPDATE ${TABLE}
+         SET category = ?,
+             customCategory = CASE
+               WHEN customCategory IS NULL OR customCategory = '' THEN ?
+               ELSE customCategory
+             END
+         WHERE category = ?;`,
+        [OTHER_CATEGORY_ID, label, id],
+      );
+
+      await db.executeSql(`DELETE FROM ${CATEGORIES_TABLE} WHERE id = ?;`, [
+        id,
+      ]);
+      await db.executeSql('COMMIT;');
+    } catch (error) {
+      await db.executeSql('ROLLBACK;');
+      throw error;
+    }
   }
 }
 

@@ -5,7 +5,7 @@ export interface Category {
   color: string;
 }
 
-export const CATEGORIES: Category[] = [
+export const DEFAULT_CATEGORIES: Category[] = [
   {id: 'food', label: 'Food & Dining', icon: '🍽️', color: '#FF6B6B'},
   {id: 'groceries', label: 'Groceries', icon: '🛒', color: '#2ECC71'},
   {id: 'clothing', label: 'Clothes', icon: '👕', color: '#9B59B6'},
@@ -31,10 +31,5 @@ export const CATEGORIES: Category[] = [
   {id: 'pets', label: 'Pets', icon: '🐾', color: '#D35400'},
   {id: 'other', label: 'Other', icon: '📦', color: '#95A5A6'},
 ];
-
-/** O(1) lookup by category id */
-export const CATEGORY_MAP: Record<string, Category> = Object.fromEntries(
-  CATEGORIES.map(c => [c.id, c]),
-);
 
 export const OTHER_CATEGORY_ID = 'other';

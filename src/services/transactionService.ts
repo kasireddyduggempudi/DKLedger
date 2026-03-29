@@ -9,6 +9,7 @@ import {ITransactionRepository} from '../repositories/ITransactionRepository';
 import {sqliteRepository} from '../repositories/SqliteTransactionRepository';
 import {Transaction} from '../models/Transaction';
 import {MonthlySummary, YearlySummary} from '../models/Summary';
+import {Category} from '../utils/constants';
 
 // ─── Swap here to use a remote API ────────────────────────────────────────────
 // import {apiRepository} from '../repositories/ApiTransactionRepository';
@@ -57,6 +58,27 @@ export async function getLast5YearsYearlySummaries(): Promise<YearlySummary[]> {
 
 export async function deleteExpense(id: string): Promise<void> {
   return activeRepository.delete(id);
+}
+
+export async function getCategories(): Promise<Category[]> {
+  return activeRepository.getCategories();
+}
+
+export async function addCategory(
+  data: Omit<Category, 'id'>,
+): Promise<Category> {
+  return activeRepository.addCategory(data);
+}
+
+export async function updateCategory(
+  id: string,
+  data: Omit<Category, 'id'>,
+): Promise<Category> {
+  return activeRepository.updateCategory(id, data);
+}
+
+export async function deleteCategory(id: string): Promise<void> {
+  return activeRepository.deleteCategory(id);
 }
 
 const getMonthKey = (date: string): string => date.slice(0, 7);

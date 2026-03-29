@@ -1,6 +1,7 @@
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {
   Alert,
+  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -10,11 +11,13 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import {useFocusEffect} from '@react-navigation/native';
 import {NativeStackScreenProps} from '@react-navigation/native-stack';
 import {RootStackParamList} from '../navigation/types';
-import {CATEGORIES, OTHER_CATEGORY_ID} from '../utils/constants';
+import {Category, OTHER_CATEGORY_ID} from '../utils/constants';
 import {
   addExpense,
+  getCategories,
   evaluateBudgetThreshold,
   updateExpense,
 } from '../services/transactionService';
@@ -34,11 +37,13 @@ export function AddExpenseScreen({navigation, route}: Props) {
   const isEditing = Boolean(expense);
 
   const [amount, setAmount] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState('food');
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [selectedCategory, setSelectedCategory] = useState('');
   const [customCategory, setCustomCategory] = useState('');
   const [note, setNote] = useState('');
   const [date, setDate] = useState(todayString());
   const [saving, setSaving] = useState(false);
+  const [loadingCategories, setLoadingCategories] = useState(true);
 
   useEffect(() => {
     navigation.setOptions({title: isEditing ? 'Edit Expense' : 'Add Expense'});
@@ -55,6 +60,35 @@ export function AddExpenseScreen({navigation, route}: Props) {
     setNote(expense.note ?? '');
     setDate(expense.date);
   }, [expense]);
+
+  const loadCategories = useCallback(async () => {
+    setLoadingCategories(true);
+    try {
+      const rows = await getCategories();
+      setCategories(rows);
+      const firstCategoryId = rows[0]?.id ?? OTHER_CATEGORY_ID;
+
+      setSelectedCategory(current => {
+        if (expense) {
+          return expense.category;
+        }
+        if (current) {
+          return current;
+        }
+        return firstCategoryId;
+      });
+    } catch {
+      Alert.alert('Error', 'Could not load categories. Please try again.');
+    } finally {
+      setLoadingCategories(false);
+    }
+  }, [expense]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadCategories();
+    }, [loadCategories]),
+  );
 
   const successActions = useMemo(
     () => [
@@ -74,6 +108,11 @@ export function AddExpenseScreen({navigation, route}: Props) {
 
     if (!amount || Number.isNaN(parsedAmount) || parsedAmount <= 0) {
       Alert.alert('Invalid Amount', 'Please enter an amount greater than 0.');
+      return;
+    }
+
+    if (!selectedCategory) {
+      Alert.alert('Category Required', 'Please select a category.');
       return;
     }
 
@@ -211,32 +250,46 @@ export function AddExpenseScreen({navigation, route}: Props) {
 
         <View style={styles.card}>
           <Text style={styles.label}>Category</Text>
-          <View style={styles.categoryWrap}>
-            {CATEGORIES.map(category => {
-              const selected = selectedCategory === category.id;
-              return (
-                <TouchableOpacity
-                  key={category.id}
-                  style={[
-                    styles.categoryChip,
-                    selected && {
-                      borderColor: category.color,
-                      backgroundColor: category.color,
-                    },
-                  ]}
-                  onPress={() => setSelectedCategory(category.id)}>
-                  <Text style={styles.categoryIcon}>{category.icon}</Text>
-                  <Text
+          <TouchableOpacity
+            style={styles.manageCategoriesButton}
+            onPress={() => navigation.navigate('ManageCategories')}>
+            <Text style={styles.manageCategoriesButtonText}>
+              Manage Categories
+            </Text>
+          </TouchableOpacity>
+
+          {loadingCategories ? (
+            <View style={styles.loadingWrap}>
+              <ActivityIndicator color={PRIMARY} />
+            </View>
+          ) : (
+            <View style={styles.categoryWrap}>
+              {categories.map(category => {
+                const selected = selectedCategory === category.id;
+                return (
+                  <TouchableOpacity
+                    key={category.id}
                     style={[
-                      styles.categoryText,
-                      selected && styles.categoryTextSelected,
-                    ]}>
-                    {category.label}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
+                      styles.categoryChip,
+                      selected && {
+                        borderColor: category.color,
+                        backgroundColor: category.color,
+                      },
+                    ]}
+                    onPress={() => setSelectedCategory(category.id)}>
+                    <Text style={styles.categoryIcon}>{category.icon}</Text>
+                    <Text
+                      style={[
+                        styles.categoryText,
+                        selected && styles.categoryTextSelected,
+                      ]}>
+                      {category.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          )}
 
           {selectedCategory === OTHER_CATEGORY_ID && (
             <TextInput
@@ -326,6 +379,25 @@ const styles = StyleSheet.create({
   dateButtonText: {fontSize: 18, fontWeight: '700', color: PRIMARY},
   dateButtonTextDisabled: {color: '#C9D0D8'},
   dateText: {fontSize: 16, fontWeight: '600', color: TEXT_PRIMARY},
+  manageCategoriesButton: {
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: PRIMARY,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    marginBottom: 10,
+  },
+  manageCategoriesButtonText: {
+    color: PRIMARY,
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  loadingWrap: {
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   categoryWrap: {flexDirection: 'row', flexWrap: 'wrap', gap: 8},
   categoryChip: {
     flexDirection: 'row',

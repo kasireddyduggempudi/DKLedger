@@ -8,6 +8,7 @@ export type RootStackParamList = {
         expense?: Transaction;
       }
     | undefined;
+  ManageCategories: undefined;
   MonthDetail: {
     year: number;
     month: number;

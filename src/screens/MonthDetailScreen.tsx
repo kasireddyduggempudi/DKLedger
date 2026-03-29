@@ -13,12 +13,13 @@ import {NativeStackScreenProps} from '@react-navigation/native-stack';
 import Svg, {Path} from 'react-native-svg';
 import {RootStackParamList} from '../navigation/types';
 import {
+  getCategories,
   deleteExpense,
   getTransactionsByMonth,
 } from '../services/transactionService';
 import {Transaction} from '../models/Transaction';
 import {CategorySummary} from '../models/Summary';
-import {CATEGORY_MAP} from '../utils/constants';
+import {Category, OTHER_CATEGORY_ID} from '../utils/constants';
 import {
   formatAmount,
   formatDateDisplay,
@@ -94,11 +95,14 @@ function DeleteIcon() {
   );
 }
 
-function buildSummaries(transactions: Transaction[]): CategorySummary[] {
+function buildSummaries(
+  transactions: Transaction[],
+  categoryMap: Record<string, Category>,
+): CategorySummary[] {
   const map: Record<string, CategorySummary> = {};
 
   for (const transaction of transactions) {
-    const categoryMeta = CATEGORY_MAP[transaction.category];
+    const categoryMeta = categoryMap[transaction.category];
     if (!map[transaction.category]) {
       map[transaction.category] = {
         categoryId: transaction.category,
@@ -121,20 +125,22 @@ function buildSummaries(transactions: Transaction[]): CategorySummary[] {
 
 function TransactionRow({
   transaction,
+  categoryMap,
   onEdit,
   onDelete,
 }: {
   transaction: Transaction;
+  categoryMap: Record<string, Category>;
   onEdit: (transaction: Transaction) => void;
   onDelete: (id: string) => void;
 }) {
-  const categoryMeta = CATEGORY_MAP[transaction.category];
+  const categoryMeta = categoryMap[transaction.category];
   const label =
-    transaction.category === 'other' && transaction.customCategory
+    transaction.category === OTHER_CATEGORY_ID && transaction.customCategory
       ? transaction.customCategory
       : categoryMeta?.label ?? transaction.category;
   const color = categoryMeta?.color ?? '#95A5A6';
-  const icon = categoryMeta?.icon ?? '*';
+  const icon = categoryMeta?.icon ?? '📦';
 
   const confirmDelete = () => {
     Alert.alert(
@@ -195,13 +201,18 @@ function TransactionRow({
 export function MonthDetailScreen({route, navigation}: Props) {
   const {year, month, label} = route.params;
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [categoryMap, setCategoryMap] = useState<Record<string, Category>>({});
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const rows = await getTransactionsByMonth(year, month);
+      const [rows, categories] = await Promise.all([
+        getTransactionsByMonth(year, month),
+        getCategories(),
+      ]);
       setTransactions(rows);
+      setCategoryMap(Object.fromEntries(categories.map(c => [c.id, c])));
     } finally {
       setLoading(false);
     }
@@ -230,7 +241,7 @@ export function MonthDetailScreen({route, navigation}: Props) {
     [navigation],
   );
 
-  const categorySummaries = buildSummaries(transactions);
+  const categorySummaries = buildSummaries(transactions, categoryMap);
   const total = transactions.reduce((sum, item) => sum + item.amount, 0);
 
   if (loading) {
@@ -250,6 +261,7 @@ export function MonthDetailScreen({route, navigation}: Props) {
       renderItem={({item}) => (
         <TransactionRow
           transaction={item}
+          categoryMap={categoryMap}
           onEdit={handleEdit}
           onDelete={handleDelete}
         />

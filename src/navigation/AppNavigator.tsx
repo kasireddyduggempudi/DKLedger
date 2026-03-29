@@ -7,6 +7,7 @@ import {DashboardScreen} from '../screens/DashboardScreen';
 import {HistoryScreen} from '../screens/HistoryScreen';
 import {AddExpenseScreen} from '../screens/AddExpenseScreen';
 import {MonthDetailScreen} from '../screens/MonthDetailScreen';
+import {ManageCategoriesScreen} from '../screens/ManageCategoriesScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -40,6 +41,11 @@ export function AppNavigator() {
         name="AddExpense"
         component={AddExpenseScreen}
         options={{title: 'Add Expense'}}
+      />
+      <Stack.Screen
+        name="ManageCategories"
+        component={ManageCategoriesScreen}
+        options={{title: 'Manage Categories'}}
       />
       <Stack.Screen
         name="MonthDetail"
